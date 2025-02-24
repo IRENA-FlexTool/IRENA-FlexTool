@@ -257,6 +257,8 @@ class FlexToolRunner:
     def create_averaged_timeseries(self,solve):
         timeseries_map={
             'pt_node_inflow.csv': "sum",
+            'pt_commodity.csv': "average",
+            'pt_group.csv': "average",
             'pt_node.csv': "average",
             'pt_process.csv': "average",
             'pt_profile.csv': "average",
@@ -559,7 +561,7 @@ class FlexToolRunner:
             with open(mps_file, 'r') as mps_file_handle:
                 mps_content = mps_file_handle.read() 
                 if 'Columns:    0' in mps_content:
-                    self.logger.error(f"The problem has no columns. Check that the model has nodes.")
+                    self.logger.error(f"The problem has no columns. Check that the model has nodes with entity alternative: true")
                     sys.exit(-1)
 
             if solver == "highs":
@@ -1871,8 +1873,8 @@ class FlexToolRunner:
 
 
     def params_to_dict(self, db, cl, par, mode, str_to_list=False):
-        entities = db.get_entity_items(entity_class_name=cl)
-        params = db.get_parameter_value_items(entity_class_name=cl,
+        print(par)
+        all_params = db.get_parameter_value_items(entity_class_name=cl,
                                                  parameter_definition_name=par)
         if mode == "defaultdict":
             result = defaultdict(list)
@@ -1880,37 +1882,32 @@ class FlexToolRunner:
             result = dict()
         elif mode == "list":
             result = []
-        for entity in entities:
-            params = db.get_parameter_value_items(entity_class_name=cl,
-                                                  entity_name=entity["name"],
-                                                  parameter_definition_name=par)
-            for param in params:
-                param_value = api.from_database(param["value"], param["type"])
-                if mode == "defaultdict" or mode == "dict":
-                    if isinstance(param_value, api.Map):
-                        if isinstance(param_value.values[0], float):
-                            result[entity["name"]] = list(zip(list(param_value.indexes), list(map(float, param_value.values))))
-                        elif isinstance(param_value.values[0], str):
-                            result[entity["name"]] = list(zip(list(param_value.indexes), param_value.values))
-                        elif isinstance(param_value.values[0], api.Map):
-                            result[entity["name"]] = api.convert_map_to_table(param_value)
-                        else:
-                            raise TypeError("params_to_dict function does not handle other values than floats and strings")
-                    elif isinstance(param_value, api.Array):
-                        result[entity["name"]] = param_value.values
-                    elif isinstance(param_value, float):
-                        result[entity["name"]] = str(param_value)
-                    elif isinstance(param_value, str):
-                        if str_to_list:
-                            result[entity["name"]] = [param_value]
-                        else:
-                            result[entity["name"]] = param_value
-                elif mode == "list":
-                    if isinstance(param_value, float):
-                        result.append([entity["name"], param_value])
-                    elif isinstance(param_value, str):
-                        result.append([entity["name"], param_value])
-
+        for param in all_params:
+            param_value = api.from_database(param["value"], param["type"])
+            if mode == "defaultdict" or mode == "dict":
+                if isinstance(param_value, api.Map):
+                    if isinstance(param_value.values[0], float):
+                        result[param["entity_name"]] = list(zip(list(param_value.indexes), list(map(float, param_value.values))))
+                    elif isinstance(param_value.values[0], str):
+                        result[param["entity_name"]] = list(zip(list(param_value.indexes), param_value.values))
+                    elif isinstance(param_value.values[0], api.Map):
+                        result[param["entity_name"]] = api.convert_map_to_table(param_value)
+                    else:
+                        raise TypeError("params_to_dict function does not handle other values than floats and strings")
+                elif isinstance(param_value, api.Array):
+                    result[param["entity_name"]] = param_value.values
+                elif isinstance(param_value, float):
+                    result[param["entity_name"]] = str(param_value)
+                elif isinstance(param_value, str):
+                    if str_to_list:
+                        result[param["entity_name"]] = [param_value]
+                    else:
+                        result[param["entity_name"]] = param_value
+            elif mode == "list":
+                if isinstance(param_value, float):
+                    result.append([param["entity_name"], param_value])
+                elif isinstance(param_value, str):
+                    result.append([param["entity_name"], param_value])
         return result
 
     def write_input(self, input_db_url, scenario_name=None):
@@ -2317,7 +2314,7 @@ class FlexToolRunner:
             write_parameter(db, [("group", "co2_price"),
                                  ("group", "max_instant_flow"),
                                  ("group", "min_instant_flow"),
-                                ], "group,groupParam,period,pt_group", "input/pt_group.csv",
+                                ], "group,groupParam,time,pt_group", "input/pt_group.csv",
                             filter_in_type=["1d_map"], filter_out_index="period", param_print=True)
             write_parameter(db, [("unit", "efficiency"),
                                  ("unit", "efficiency_at_min_load"),
@@ -2375,6 +2372,7 @@ def write_parameter(db, cl_pars, header, filename,
                     filter_in_type=None, filter_out_index=None, filter_in_value=None,
                     no_value=False, param_print=False, dimens=None, param_loc=None, no_entity=None):
     # interpret map dimensionality and map into map for later comparisons
+    print(f'writing: {cl_pars}')
     type_filter_map_dim = []
     if filter_in_type:
         map_found = False

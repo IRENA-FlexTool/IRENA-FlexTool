@@ -124,6 +124,7 @@ set methods :=
 
 set commodityParam := price, co2_content;
 set commodityPeriodParam := price;
+set commodityTimeParam := price;
 set processParam := efficiency existing fixed_cost interest_rate invest_cost salvage_value
                     invest_max_period invest_max_total lifetime
 					invest_min_period invest_min_total
@@ -196,6 +197,7 @@ set groupPeriodParam := capacity_margin, co2_price, co2_max_period, co2_max_tota
 				  non_synchronous_limit, penalty_inertia, penalty_non_synchronous,
 				  max_instant_flow, min_instant_flow, penalty_capacity_margin,
 				  retire_max_period, retire_min_period;
+set groupTimeParam := co2_price, max_instant_flow, min_instant_flow;
 set invest_method_not_allowed := not_allowed, retire_period, retire_total, retire_no_limit;
 set divest_method_not_allowed := not_allowed, invest_period, invest_total, invest_no_limit;
 set profile_method := upper_limit lower_limit fixed;

@@ -21,7 +21,7 @@ def migrate_database(database_path):
             version = from_database(settings_parameter.default_value, settings_parameter.default_type)
 
         next_version = int(version) + 1
-        new_version = 22
+        new_version = 23
 
         while next_version <= new_version:
             if next_version == 0:
@@ -110,6 +110,10 @@ def migrate_database(database_path):
                 db.update_item("parameter_definition", entity_class_name= "connection", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.")
                 db.update_item("parameter_definition", entity_class_name= "solve", name= "solve_mode", description = "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.")
                 db.commit_session("Added cumulative investments")
+            elif next_version == 23:
+                db.add_update_item("parameter_definition", entity_class_name= "commodity", name= "price", parameter_type_list = None, parameter_value_list_name = None, description = "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.")
+                db.add_update_item("parameter_definition", entity_class_name= "group", name= "co2_price", parameter_type_list = None, parameter_value_list_name = None, description = "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.")
+                update_parameter_types(db)
             else:
                 print("Version invalid")
             next_version += 1
@@ -247,9 +251,14 @@ def change_optional_output_type(db, filepath):
         print("This change has been done before, continuing") 
     return 0
 
+def update_parameter_types(db):
+    type_list = get_parameter_type_list()
+    for i in type_list:
+        db.add_update_item("parameter_definition", entity_class_name = i[0], name = i[1], parameter_type_list = i[2])
+
 def get_parameter_type_list():
     types = [["commodity", "co2_content", ("float",)],
-             ["commodity", "price", ("float",)],
+             ["commodity", "price", ("float","1d_map")],
              ["connection", "availability", ("float","1d_map")],
              ["connection", "constraint_capacity_coefficient", ("1d_map",)],
              ["connection", "cumulative_max_capacity", ("float","1d_map")],
@@ -450,12 +459,8 @@ def get_parameter_type_list():
              ["reserve__upDown__unit__node", "max_share", ("float",)],
              ["reserve__upDown__unit__node", "reliability", ("float",)]
              ]
-    out = []
-    for i in types:
-        dictionary = {"entity_class_name": i[0], "name": i[1], "parameter_type_list": i[2]}
-        out.append(dictionary)
-
-    return out
+    
+    return types
     
     
 if __name__ == '__main__':

@@ -72,6 +72,7 @@ set sense_equal within sense;
 
 set commodityParam;
 set commodityPeriodParam within commodityParam;
+set commodityTimeParam within commodityParam;
 set nodeParam;
 set nodeParam_def1 within nodeParam;
 set nodePeriodParam;
@@ -112,8 +113,10 @@ set reserve__upDown__group__reserveParam__time dimen 5 within {reserve, upDown, 
 
 set group__param dimen 2 within {group, groupParam};
 set group__param__period dimen 3; # within {group, groupPeriodParam, periodAll};
+set group__param__time dimen 3 within {group, groupTimeParam, time};
 set node__param__period dimen 3; # within {node, nodePeriodParam, periodAll};
 set commodity__param__period dimen 3; # within {commodity, commodityPeriodParam, periodAll};
+set commodity__param__time dimen 3; # within {commodity, commodityTimeParam, time};
 set process__param__period dimen 3; # within {process, processPeriodParam, periodAll};
 
 set period_group 'picking up periods from group data' := setof {(n, param, d) in group__param__period} (d);
@@ -126,6 +129,7 @@ set periodAll 'd - Time periods in data (including those currently in use)' := p
 
 param p_group {g in group, groupParam} default 0;
 param pd_group {g in group, groupPeriodParam, d in periodAll} default 0;
+param pt_group {g in group, groupTimeParam, time} default 0;
 param p_group__process {g in group, p in process, groupParam};
 
 
@@ -315,6 +319,7 @@ param p_model {modelParam};
 param p_nested_model {modelParam};
 param p_commodity {c in commodity, commodityParam} default 0;
 param pd_commodity {c in commodity, commodityPeriodParam, d in periodAll} default 0;
+param pt_commodity {c in commodity, commodityTimeParam, time} default 0;
 
 param p_node {node, nodeParam} default 0;
 param pd_node {node, nodePeriodParam, periodAll} default 0;
@@ -515,6 +520,8 @@ table data IN 'CSV' 'input/default_values.csv' : class_paramName_default <-[clas
 table data IN 'CSV' 'input/default_values.csv' : [class,paramName], default_value;
 
 #Timeseries parameters, Timestep values are in solve_data as they might be averaged for the solve
+table data IN 'CSV' 'solve_data/pt_commodity.csv' : commodity__param__time <- [commodity, commodityParam, time], pt_commodity~pt_commodity;
+table data IN 'CSV' 'solve_data/pt_group.csv' : group__param__time <- [group, groupParam, time], pt_group~pt_group;
 table data IN 'CSV' 'solve_data/pt_node.csv' : node__param__time <- [node, nodeParam, time], pt_node~pt_node;
 table data IN 'CSV' 'solve_data/pt_node_inflow.csv' : node__time_inflow <- [node, time], pt_node_inflow~pt_node_inflow;
 table data IN 'CSV' 'solve_data/pt_process.csv' : process__param__time <- [process, processParam, time], pt_process~pt_process;
@@ -759,6 +766,13 @@ param pdCommodity {c in commodity, param in commodityPeriodParam, d in period} :
       then sum{(db, d) in period__branch} pd_commodity[c, param, db]
       else p_commodity[c, param];
 
+param pdtCommodity {c in commodity, param in commodityTimeParam, (d, t) in dt} :=
+        + if (c, param, t) in commodity__param__time
+		     then pt_commodity[c, param, t]
+        else if (c, param, d) in commodity__param__period
+		     then pd_commodity[c, param, d]
+	      else p_commodity[c, param];
+
 param pdGroup {g in group, param in groupPeriodParam, d in period} :=
         + if (g, param, d) in group__param__period
 		  then pd_group[g, param, d]
@@ -769,6 +783,15 @@ param pdGroup {g in group, param in groupPeriodParam, d in period} :=
       else if param == 'penalty_inertia' || param == 'penalty_capacity_margin' || param == 'penalty_non_synchronous'
       then 5000
 		  else 0;
+
+param pdtGroup {g in group, param in groupTimeParam, (d, t) in dt} :=
+        + if (g, param, t) in group__param__time
+		     then pt_group[g, param, t]
+        else if (g, param, d) in group__param__period
+		     then pd_group[g, param, d]
+	      else if (g, param) in group__param 
+		     then p_group[g, param]
+        else 0;
 
 set reserve__upDown__group__method_timeseries := {(r, ud, ng, r_m) in reserve__upDown__group__method 
                                                        : r_m = 'timeseries_only'
@@ -800,8 +823,8 @@ set process_sinkIsNode_2way1var := setof {(p, source, sink) in process__source__
 set process__source__sinkIsNode_2way2var := {(p, source, sink) in process_source_sink : (p, sink) in process_sink 
 	                                       && sum{(p,m) in process_method : m in method_2way_2var } 1};
 
-set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'max_instant_flow', d]};
-set gdt_minInstantFlow := {g in group, (d, t) in dt : pdGroup[g, 'min_instant_flow', d]};
+set gdt_maxInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'max_instant_flow', d, t]};
+set gdt_minInstantFlow := {g in group, (d, t) in dt : pdtGroup[g, 'min_instant_flow', d, t]};
 		  
 set process__source__timeParam := 
     { (p, source) in process_source, param in sourceSinkTimeParam
@@ -1414,15 +1437,14 @@ set process_reserve_upDown_node_large_failure_ratio :=
 		    p_process_reserve_upDown_node[p, r, ud, n, 'large_failure_ratio'] > 0
 		};
 set process_large_failure := setof {(p, r, ud, n) in process_reserve_upDown_node_large_failure_ratio} p;
-
-set group_commodity_node_period_co2_price :=
-        {g in group, (c, n) in commodity_node, d in period : 
-		    (g, n) in group_node 
-			&& p_commodity[c, 'co2_content'] 
-			&& g in group_co2_price
-			&& pdGroup[g, 'co2_price', d]
-		};
-set gcndt_co2_price := {(g, c, n, d) in group_commodity_node_period_co2_price, t in time_in_use : (d, t) in dt};
+ 
+set gcndt_co2_price := 
+        {g in group, (c,n) in commodity_node, d in period, t in time_in_use: (d,t) in dt 
+        && (g, n) in group_node 
+        && p_commodity[c, 'co2_content']
+        && g in group_co2_price
+        && pdtGroup[g, 'co2_price', d, t]
+      };
 
 set group_commodity_node_period_co2_period :=
         {g in group, (c, n) in commodity_node, d in period : 
@@ -1781,7 +1803,7 @@ param setup2 := gmtime() - datetime0 - setup1 - w_calc_slope;
 display setup2;
 minimize total_cost:
 ( + sum {(c, n) in commodity_node, (d, t) in dt}
-    (+ pdCommodity[c, 'price', d]
+    (+ pdtCommodity[c, 'price', d, t]
 	  * (
 		  # Buying a commodity (increases the objective function)
 		  + sum {(p, n, sink) in process_source_sink_noEff } 
@@ -1806,7 +1828,7 @@ minimize total_cost:
 	  * step_duration[d, t] * p_discount_factor_operations_yearly[d] / complete_period_share_of_year[d] * pdt_branch_weight[d,t]
 	)
   + sum {(g, c, n, d, t) in gcndt_co2_price} 
-    (+ p_commodity[c, 'co2_content'] * pdGroup[g, 'co2_price', d] 
+    (+ p_commodity[c, 'co2_content'] * pdtGroup[g, 'co2_price', d, t] 
 	  * (
 		  # Paying for CO2 (increases the objective function)
 		  + sum {(p, n, sink) in process_source_sink_noEff } 
@@ -2994,7 +3016,7 @@ s.t. maxInstant_flow {(g, d, t) in gdt_maxInstantFlow} :
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 	)
 	<=
-  + pdGroup[g, 'max_instant_flow', d] 
+  + pdtGroup[g, 'max_instant_flow', d, t] 
 ;
 
 s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
@@ -3019,7 +3041,7 @@ s.t. minInstant_flow {(g, d, t) in gdt_minInstantFlow} :
           + v_flow[p, n, sink, d, t] * p_entity_unitsize[p]
 	)
 	>=
-  + pdGroup[g, 'min_instant_flow', d] 
+  + pdtGroup[g, 'min_instant_flow', d, t] 
 ;
 
 s.t. inertia_constraint {g in groupInertia, (d, t) in dt} :
@@ -3248,17 +3270,17 @@ s.t. non_anticipativity_storage_use{n in nodeState, (d,b) in period__branch, (d,
           ) * step_duration[b, t]
         ;
 
-s.t. non_anticipativity_online_integer{p in process_online_integer, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+s.t. non_anticipativity_online_integer{p in process_online_integer, (d,b) in period__branch, (d,t) in dt_non_anticipativity: b in period_in_use}:
   + v_online_integer[p,d,t] 
   = 
   + v_online_integer[p,b,t] 
 ;
-s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in period__branch, (d,t) in dt_non_anticipativity}:
+s.t. non_anticipativity_online_linear{p in process_online_linear, (d,b) in period__branch, (d,t) in dt_non_anticipativity: b in period_in_use}:
   + v_online_linear[p,d,t] 
   = 
   + v_online_linear[p,b,t] 
 ;
-s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1}: 
+s.t. non_anticipativity_reserve{(p, r, ud, n) in process_reserve_upDown_node_active, (d,b) in period__branch, (d,t) in dt_non_anticipativity: sum{(r, ud, g) in reserve__upDown__group} 1 && b in period_in_use}: 
   + v_reserve[p, r, ud, n, d, t]
   =
   + v_reserve[p, r, ud, n, b, t]
@@ -3404,7 +3426,7 @@ param r_selfDischargeLoss_d{n in nodeSelfDischarge, d in d_realized_period} := s
 
 param r_cost_commodity_dt{(c, n) in commodity_node, (d, t) in dt} := 
   + step_duration[d, t] 
-      * pdCommodity[c, 'price', d] 
+      * pdtCommodity[c, 'price', d, t] 
       * ( + sum{(p, n, sink) in process_source_sink_alwaysProcess}
               + r_process__source__sink_Flow__dt[p, n, sink, d, t]
 		  - sum{(p, source, n) in process_source_sink_alwaysProcess}	  
@@ -3440,7 +3462,7 @@ param r_emissions_co2_d{(c, n) in commodity_node_co2, d in d_realized_period} :=
 
 param r_cost_co2_dt{(g, c, n, d, t) in gcndt_co2_price} := 
   + r_emissions_co2_dt[c, n, d, t] 
-    * pdGroup[g, 'co2_price', d]
+    * pdtGroup[g, 'co2_price', d, t]
 ;	  
 
 param r_cost_process_other_operational_cost_dt{p in process, (d, t) in dt} :=
@@ -4613,7 +4635,7 @@ for {s in solve_current, d in d_realized_period: 'yes' not in exclude_entity_out
   {
 	  printf '\n%s,%s,%s','curtailment', s, d >> fn_unit__sinkNode__d_curtailment;
     for {(u, sink) in process_sink : u in process_VRE}
-      { printf ',%.6f', ( if entity_all_capacity[u, d] 
+      { printf ',%.6f', ( if entity_all_capacity[u, d] && potentialVREgen[u, sink, d]
 					      then ( potentialVREgen[u, sink, d] - r_process_sink_flow_d[u, sink, d] ) / potentialVREgen[u, sink, d]
 						  else 0 ) >> fn_unit__sinkNode__d_curtailment; }
     printf '\n%s,%s,%s','potential', s, d >> fn_unit__sinkNode__d_curtailment;
